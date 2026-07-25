@@ -5,14 +5,26 @@ aimed at simple HVAC work (superheat/subcooling, delta-T across coils).
 
 ## Status
 
-The UT320i's BLE protocol is **not publicly documented**, so the app currently
-ships as a **protocol explorer**: it connects to the clamp, lists every GATT
-service/characteristic it can see, subscribes to all notify characteristics,
-and hex-dumps each frame. For every frame it also prints candidate int16
-little-endian interpretations (scaled /10 and /100) in the plausible −50…150 °C
+The app is a **protocol explorer** with a partially-known protocol. The GATT
+layout was confirmed with an nRF Connect capture (UT320i SN:251101079):
+
+| Service | Characteristic | Role |
+|---|---|---|
+| `0xFF12` (vendor, Realtek) | `FF01` write-no-response | command channel |
+| | `FF02` notify | data channel — **silent until commanded** |
+| | `FF03`–`FF0B` read/write | config registers (`FF05` = user id, `FF06` = device name) |
+| `0x180A` | standard | device information |
+| `d0ff…` | standard | Realtek OTA update service |
+
+Related UNI-T "Smart Measure" meters (UT171, UT219P — see the
+[ble-multimeter protocol docs](https://github.com/ble-multimeter/multimeter/tree/main/docs/protocols))
+frame commands as `AB CD <len u16> <cmd> <payload…> <checksum u16 LE>` with an
+additive checksum, and emit nothing until a START command. On connect the app
+auto-probes the known START variants against `FF01` and reports which dialect
+the clamp answers to. Every frame is hex-dumped with candidate int16 (/10,
+/100) and float32 little-endian interpretations in the plausible −50…150 °C
 range — warm the clamp in your hand and watch which candidate tracks the
-reading on the meter's own display. Once the format is known, implement
-`decodeFrame()` in `app.js` and the live-reading panel comes alive.
+meter's own display, then finalize `decodeFrame()` in `app.js`.
 
 ## Running it
 

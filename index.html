@@ -20,6 +20,7 @@
   <section class="controls">
     <button id="connect">Connect device</button>
     <button id="disconnect" disabled>Disconnect</button>
+    <button id="probe" disabled>Probe handshake</button>
     <label class="checkbox">
       <input type="checkbox" id="acceptAll">
       Show all BLE devices (not just UT/UNI-T names)
@@ -40,8 +41,9 @@
 
   <section class="panel">
     <h2>Write command</h2>
-    <p class="hint">Some UNI-T meters only stream after a handshake write. Pick a writable characteristic and send hex bytes (e.g. <code>ab cd 04 5e 01 d9</code>).</p>
+    <p class="hint">The clamp streams nothing until a command is written to FF01. "Probe handshake" tries known UNI-T Smart Measure commands automatically; you can also pick a preset or send arbitrary hex.</p>
     <div class="write-row">
+      <select id="presets"><option value="">— preset —</option></select>
       <select id="writeTarget"></select>
       <input type="text" id="writeHex" placeholder="hex bytes, space separated">
       <button id="writeBtn" disabled>Write</button>

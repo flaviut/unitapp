@@ -96,6 +96,9 @@ button:disabled { opacity: .45; cursor: default; }
 .frame .u { color: var(--accent); }
 .frame .ascii { color: var(--muted); }
 .frame .cands { color: var(--ok); margin-left: 6.5rem; white-space: normal; }
+.frame.tx { color: var(--accent); }
+.frame.ok { color: var(--ok); font-weight: 600; }
+.frame.err { color: #b3261e; }
 
 .log-controls {
   display: flex;
