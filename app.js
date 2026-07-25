@@ -360,11 +360,13 @@ async function setupClamp(clamp) {
   }
 
   if (!notifyChar) throw new Error('FF02 notify characteristic not found');
-  await notifyChar.startNotifications();
+  // Hook the listener before subscribing so the very first frames (the
+  // cmd 0x08/0x06 handshake responses) can't slip through unheard.
   if (!clamp.notifyHooked) {
     clamp.notifyHooked = true;
     notifyChar.addEventListener('characteristicvaluechanged', (ev) => onNotification(clamp, ev));
   }
+  await notifyChar.startNotifications();
 
   setConn(clamp, 'connected', true);
   refreshClampSelects();
