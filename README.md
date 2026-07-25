@@ -12,6 +12,11 @@ aimed at simple HVAC work (superheat/subcooling, delta-T across coils).
 - °F/°C toggle (remembered), 10-minute multi-line trend chart
 - Keep-screen-awake toggle for field use
 - Session CSV: download or one-tap copy (time, clamp, °C, °F)
+- **Superheat/subcool calculator**: enter gauge pressure, pick the clamp on
+  the line — supports R-410A, R-32, R-454B, R-22, R-407C, R-404A, R-134a.
+  Saturation tables generated with CoolProp 8.0 (NIST-grade equations of
+  state), dew line for superheat and bubble line for subcool so glide blends
+  are handled correctly
 - Debug menu (collapsed by default): GATT dump, raw frame log, manual hex
   writes, and one-tap "Copy diagnostics" for bug reports
 
@@ -84,6 +89,7 @@ Or host it on GitHub Pages — the app is static files with no build step.
 - [x] Decode the measurement frame (temperature)
 - [x] Trend chart + session logging (CSV)
 - [x] Multi-clamp support with live delta-T
-- [ ] Map battery/status fields
-- [ ] Superheat/subcooling calculator (needs vetted refrigerant PT tables —
-  not shipping guessed saturation data)
+- [x] Superheat/subcooling calculator (CoolProp-generated PT tables)
+- [ ] Map battery/status fields — the live-frame status byte and cmd
+  0x08/0x06 payloads are shown raw on each clamp card; capture them at
+  different battery levels to decode

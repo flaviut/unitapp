@@ -35,6 +35,33 @@
     <div id="delta" class="reading">–</div>
   </section>
 
+  <section class="panel" id="shscPanel">
+    <h2>Superheat / Subcool
+      <select id="refrigerant" class="inline"></select>
+    </h2>
+    <div class="shsc-grid">
+      <div class="shsc-box">
+        <h3>Superheat <span class="hint">suction line</span></h3>
+        <div class="shsc-inputs">
+          <label>low side <input type="number" id="shPsig" inputmode="decimal" min="0" step="0.5"> psig</label>
+          <label>clamp <select id="shClamp"></select></label>
+        </div>
+        <div class="shsc-out" id="shOut">–</div>
+        <div class="hint" id="shDetail"></div>
+      </div>
+      <div class="shsc-box">
+        <h3>Subcool <span class="hint">liquid line</span></h3>
+        <div class="shsc-inputs">
+          <label>high side <input type="number" id="scPsig" inputmode="decimal" min="0" step="0.5"> psig</label>
+          <label>clamp <select id="scClamp"></select></label>
+        </div>
+        <div class="shsc-out" id="scOut">–</div>
+        <div class="hint" id="scDetail"></div>
+      </div>
+    </div>
+    <p class="hint">Saturation data computed with CoolProp 8.0 (NIST-grade equations of state); dew line for superheat, bubble line for subcool; gauge pressure at sea level.</p>
+  </section>
+
   <section class="panel">
     <h2>Trend <span class="hint">last 10 minutes</span></h2>
     <canvas id="chart" class="chart tall"></canvas>
