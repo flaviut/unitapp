@@ -58,32 +58,14 @@
 
   <section class="panel">
     <h2>Trend <span class="hint">last 10 minutes</span></h2>
-    <canvas id="chart" class="chart tall"></canvas>
+    <canvas id="chart" class="chart"></canvas>
   </section>
 
   <details class="panel" id="debugPanel">
     <summary>Debug</summary>
-    <p class="hint">Troubleshooting tools — use the copy buttons to paste into a bug report.
-      Build <code id="build">__BUILD__</code>.</p>
-    <div class="stats-row">
-      <button id="copyDiag" class="small">Copy diagnostics</button>
-      <button id="dumpGatt" class="small">Dump GATT services</button>
-      <label class="checkbox"><input type="checkbox" id="showRaw"> Log raw notifications</label>
-    </div>
-    <div class="stats-row">
-      <button id="exportReadings" class="small">Download readings CSV</button>
-      <button id="copyReadings" class="small">Copy readings CSV</button>
-      <button id="exportCsv" class="small">Download raw frames CSV</button>
-      <button id="resetSession" class="small">Reset session</button>
-    </div>
-    <div id="services" class="services"></div>
-    <div class="write-row">
-      <select id="presets"><option value="">— preset —</option></select>
-      <select id="writeTarget"></select>
-      <input type="text" id="writeHex" placeholder="hex bytes, space separated">
-      <button id="writeBtn" disabled>Write</button>
-    </div>
-    <div id="log" class="log"></div>
+    <p class="hint">Build <code id="build">__BUILD__</code>. Something wrong?
+      Tap copy and paste it into a bug report.</p>
+    <button id="copyDiag" class="small">Copy diagnostics</button>
   </details>
 
   <script src="app.js?v=__BUILD__"></script>

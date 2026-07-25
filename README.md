@@ -18,9 +18,9 @@ connect, temperatures, ΔT, superheat/subcool, and a trend chart:
   Saturation tables generated with CoolProp 8.0 (NIST-grade equations of
   state), dew line for superheat and bubble line for subcool so glide blends
   are handled correctly
-- Debug menu (collapsed by default) holds everything else: session CSV
-  download/copy, GATT dump, raw frame log, manual hex writes, and one-tap
-  "Copy diagnostics" for bug reports
+- Debug menu (collapsed by default) is a single "Copy diagnostics" button:
+  clamp states, raw status bytes, and the last raw frames, ready to paste
+  into a bug report
 
 ### Wire protocol
 
@@ -89,7 +89,7 @@ Or host it on GitHub Pages — the app is static files with no build step.
 ## Roadmap
 
 - [x] Decode the measurement frame (temperature)
-- [x] Trend chart + session logging (CSV)
+- [x] Trend chart
 - [x] Multi-clamp support with live delta-T
 - [x] Superheat/subcooling calculator (CoolProp-generated PT tables)
 - [ ] Map battery/status fields — the live-frame status byte and cmd

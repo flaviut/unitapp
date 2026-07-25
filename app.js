@@ -18,20 +18,8 @@ const UT_WRITE_UUID = '0000ff01-0000-1000-8000-00805f9b34fb';
 const UT_NOTIFY_UUID = '0000ff02-0000-1000-8000-00805f9b34fb';
 const UT_NAME_UUID = '0000ff06-0000-1000-8000-00805f9b34fb';
 
-const PROBE_COMMANDS = [
-  { label: 'START stream (UT171)', hex: 'ab cd 04 00 0a 01 16 00' },
-  { label: 'live-data poll (UT219P)', hex: 'ab cd 00 04 05 00 09 00' },
-  { label: 'device info (UT171)', hex: 'ab cd 04 00 16 5a 7b 00' },
-  { label: 'device info (UT219P)', hex: 'ab cd 00 04 17 00 1b 00' },
-];
-
-const CANDIDATE_SERVICES = [
-  UT_SERVICE,
-  'battery_service',
-  'device_information',
-  'generic_access',
-  '0000d0ff-3c17-d293-8e48-14fe2e4da212', // Realtek OTA
-];
+// UT171-family START frame — the only command the clamp needs (see README).
+const START_CMD = Uint8Array.of(0xab, 0xcd, 0x04, 0x00, 0x0a, 0x01, 0x16, 0x00);
 
 const COLORS = ['#0a66c2', '#d92d20', '#1a7f37', '#b54708', '#7a5af8', '#0e7090'];
 const CHART_WINDOW_MS = 10 * 60 * 1000;
@@ -41,9 +29,7 @@ const $ = (id) => document.getElementById(id);
 // Each clamp: {device, server, writeChar, name, color, rxBuffer, readings:[{t,c}],
 //             connected, el:{card, name, conn, reading}}
 const clamps = [];
-// Session-wide logs that survive clamp removal.
-const readingsLog = []; // {t, name, c}
-const framesLog = [];   // {t, name, bytes}
+const framesLog = []; // {t, name, bytes} — last raw frames, for diagnostics
 let unit = localStorage.getItem('ut320i-unit') || 'F';
 let wakeLock = null;
 
@@ -109,32 +95,10 @@ function ascii(bytes) {
   return Array.from(bytes, (b) => (b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : '·')).join('');
 }
 
-function shortUuid(uuid) {
-  const m = /^0000([0-9a-f]{4})-0000-1000-8000-00805f9b34fb$/.exec(uuid);
-  return m ? '0x' + m[1].toUpperCase() : uuid;
-}
-
 function shortName(name) {
   // "UT320i SN:260500277" → "SN:…0277" keeps cards compact but unambiguous.
   const m = /SN:(\d+)/.exec(name || '');
   return m ? `Clamp …${m[1].slice(-4)}` : (name || 'Clamp');
-}
-
-// --- Debug log ------------------------------------------------------------
-
-function logLine(html, cls = 'frame') {
-  const el = document.createElement('div');
-  el.className = cls;
-  el.innerHTML = html;
-  const log = $('log');
-  log.appendChild(el);
-  while (log.childElementCount > 400) log.removeChild(log.firstChild);
-  log.scrollTop = log.scrollHeight;
-}
-
-function logHex(name, bytes, tag, cls = 'frame') {
-  logLine(`<span class="t">${new Date().toISOString().slice(11, 23)}</span> ` +
-    `<span class="u">${name} ${tag}</span> <span class="hex">${hex(bytes)}</span>`, cls);
 }
 
 // --- Clamp cards ----------------------------------------------------------
@@ -174,7 +138,7 @@ function removeClamp(clamp) {
   clamps.splice(clamps.indexOf(clamp), 1);
   updateDelta();
   drawChart();
-  refreshWriteTargets();
+  refreshClampSelects();
   syncWakeLock();
 }
 
@@ -336,7 +300,7 @@ async function addClamp() {
       { namePrefix: 'UT' },
       { services: [UT_SERVICE] },
     ],
-    optionalServices: CANDIDATE_SERVICES,
+    optionalServices: [UT_SERVICE],
   });
 
   let clamp = clamps.find((c) => c.device.id === device.id);
@@ -403,8 +367,21 @@ async function setupClamp(clamp) {
   }
 
   setConn(clamp, 'connected', true);
-  refreshWriteTargets();
-  probeHandshake(clamp).catch((e) => logLine(`${clamp.name} probe error: ${e.message}`, 'frame err'));
+  refreshClampSelects();
+  startStream(clamp).catch(() => { /* connection died; auto-reconnect handles it */ });
+}
+
+// The clamp streams nothing until commanded. Resend START a few times in
+// case the first write lands before notifications are fully live.
+async function startStream(clamp) {
+  if (!clamp.writeChar) return;
+  for (let i = 0; i < 3 && clamp.connected; i++) {
+    const before = clamp.readings.length;
+    await writeBytes(clamp.writeChar, START_CMD);
+    await new Promise((r) => setTimeout(r, 2500));
+    if (clamp.readings.length > before) return;
+  }
+  if (clamp.connected) setConn(clamp, 'connected — no data', true);
 }
 
 function onNotification(clamp, ev) {
@@ -412,8 +389,7 @@ function onNotification(clamp, ev) {
   const bytes = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
   const t = Date.now();
   framesLog.push({ t, name: clamp.fullName, bytes });
-  if (framesLog.length > 5000) framesLog.shift();
-  if ($('showRaw').checked) logHex(clamp.name, bytes, 'raw');
+  if (framesLog.length > 300) framesLog.shift();
 
   for (const f of extractUtFrames(clamp, bytes)) {
     const decoded = decodeFrame(f);
@@ -421,24 +397,16 @@ function onNotification(clamp, ev) {
       clamp.readings.push({ t, c: decoded.c });
       if (clamp.readings.length > 4000) clamp.readings.shift();
       if (decoded.status !== null) clamp.statusByte = decoded.status;
-      readingsLog.push({ t, name: clamp.fullName, c: decoded.c });
       renderClamp(clamp);
       updateDelta();
       drawChart();
     } else {
-      // Status/info responses: keep the latest payload per command for the
-      // card's raw-status line (field meanings not yet mapped).
+      // Status/info responses: keep the latest payload per command for
+      // diagnostics (field meanings not yet mapped).
       clamp.info = clamp.info || {};
       clamp.info[f[3]] = hex(f.slice(4, f.length - 2));
-      logHex(clamp.name, f, `cmd 0x${f[3].toString(16).padStart(2, '0')}`, 'frame ok');
     }
   }
-}
-
-function parseHex(text) {
-  const bytes = new Uint8Array(text.trim().split(/[\s,]+/).filter(Boolean).map((h) => parseInt(h, 16)));
-  if (!bytes.length || Array.from(bytes).some(Number.isNaN)) return null;
-  return bytes;
 }
 
 async function writeBytes(ch, bytes) {
@@ -449,88 +417,7 @@ async function writeBytes(ch, bytes) {
   }
 }
 
-async function probeHandshake(clamp) {
-  if (!clamp.writeChar) return;
-  for (const cmd of PROBE_COMMANDS) {
-    const before = clamp.readings.length;
-    logLine(`→ ${clamp.name}: ${cmd.label} (${cmd.hex})`, 'frame tx');
-    await writeBytes(clamp.writeChar, parseHex(cmd.hex));
-    await new Promise((r) => setTimeout(r, 1800));
-    if (clamp.readings.length > before) return;
-  }
-  logLine(`✗ ${clamp.name}: no probe elicited data — try Reconnect.`, 'frame err');
-}
-
-// --- Debug: GATT dump & manual writes ------------------------------------
-
-async function dumpGatt() {
-  const container = $('services');
-  container.textContent = clamps.length ? '' : 'No clamps connected.';
-  for (const clamp of clamps.filter((c) => c.connected)) {
-    const head = document.createElement('div');
-    head.innerHTML = `<strong>${clamp.fullName}</strong>`;
-    container.appendChild(head);
-    let services = [];
-    try { services = await clamp.server.getPrimaryServices(); } catch (e) {
-      head.innerHTML += ` — ${e.message}`;
-      continue;
-    }
-    for (const service of services) {
-      const sEl = document.createElement('div');
-      sEl.className = 'service';
-      sEl.innerHTML = `<strong>Service ${shortUuid(service.uuid)}</strong>`;
-      container.appendChild(sEl);
-      for (const ch of await service.getCharacteristics()) {
-        const props = ['read', 'write', 'writeWithoutResponse', 'notify', 'indicate']
-          .filter((p) => ch.properties[p]).join(', ');
-        const cEl = document.createElement('div');
-        cEl.className = 'char';
-        cEl.textContent = `↳ ${shortUuid(ch.uuid)} [${props}]`;
-        sEl.appendChild(cEl);
-        if (ch.properties.read) {
-          try {
-            const dv = await ch.readValue();
-            const bytes = new Uint8Array(dv.buffer);
-            cEl.textContent += ` = ${hex(bytes)} "${ascii(bytes)}"`;
-          } catch { /* unreadable */ }
-        }
-      }
-    }
-  }
-}
-
-function refreshWriteTargets() {
-  refreshClampSelects();
-  const sel = $('writeTarget');
-  sel.textContent = '';
-  clamps.forEach((clamp, i) => {
-    if (clamp.writeChar && clamp.connected) {
-      const opt = document.createElement('option');
-      opt.value = String(i);
-      opt.textContent = `${clamp.name} FF01`;
-      sel.appendChild(opt);
-    }
-  });
-  $('writeBtn').disabled = sel.childElementCount === 0;
-}
-
-// --- Export / copy --------------------------------------------------------
-
-function readingsCsv() {
-  const rows = [['iso_time', 'clamp', 'temp_c', 'temp_f']];
-  for (const r of readingsLog) {
-    rows.push([new Date(r.t).toISOString(), r.name, r.c.toFixed(3), cToF(r.c).toFixed(3)]);
-  }
-  return rows.map((r) => r.join(',')).join('\n');
-}
-
-function framesCsv() {
-  const rows = [['iso_time', 'clamp', 'hex']];
-  for (const f of framesLog) {
-    rows.push([new Date(f.t).toISOString(), f.name, hex(f.bytes)]);
-  }
-  return rows.map((r) => r.join(',')).join('\n');
-}
+// --- Diagnostics ----------------------------------------------------------
 
 function diagText() {
   const build = $('build')?.textContent || '?';
@@ -554,15 +441,6 @@ function diagText() {
   return lines.join('\n');
 }
 
-function download(text, name) {
-  const blob = new Blob([text], { type: 'text/csv' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = name;
-  a.click();
-  URL.revokeObjectURL(a.href);
-}
-
 async function copyText(text, btn) {
   try {
     await navigator.clipboard.writeText(text);
@@ -570,7 +448,7 @@ async function copyText(text, btn) {
     btn.textContent = 'Copied ✓';
     setTimeout(() => { btn.textContent = old; }, 1500);
   } catch (e) {
-    alert(`Copy failed (${e.message}) — use the download button instead.`);
+    alert(`Copy failed: ${e.message}`);
   }
 }
 
@@ -627,41 +505,11 @@ for (const id of ['refrigerant', 'shPsig', 'scPsig', 'shClamp', 'scClamp']) {
   $(id).addEventListener('input', updateShSc);
 }
 
-const presetSel = $('presets');
-for (const cmd of PROBE_COMMANDS) {
-  const opt = document.createElement('option');
-  opt.value = cmd.hex;
-  opt.textContent = cmd.label;
-  presetSel.appendChild(opt);
-}
-presetSel.addEventListener('change', () => { $('writeHex').value = presetSel.value; });
-
 $('connect').addEventListener('click', () =>
   addClamp().catch((e) => {
     if (e.name !== 'NotFoundError') $('status').textContent = `Error: ${e.message}`;
   }));
-$('resetSession').addEventListener('click', () => {
-  clamps.forEach((c) => { c.readings = []; c.el.reading.textContent = '–'; });
-  readingsLog.length = 0;
-  framesLog.length = 0;
-  updateDelta();
-  drawChart();
-});
-$('exportReadings').addEventListener('click', () =>
-  download(readingsCsv(), `ut320i-readings-${Date.now()}.csv`));
-$('copyReadings').addEventListener('click', (e) => copyText(readingsCsv(), e.target));
-$('exportCsv').addEventListener('click', () =>
-  download(framesCsv(), `ut320i-frames-${Date.now()}.csv`));
 $('copyDiag').addEventListener('click', (e) => copyText(diagText(), e.target));
-$('dumpGatt').addEventListener('click', () =>
-  dumpGatt().catch((e) => { $('services').textContent = `Dump failed: ${e.message}`; }));
-$('writeBtn').addEventListener('click', () => {
-  const clamp = clamps[Number($('writeTarget').value)];
-  const bytes = parseHex($('writeHex').value);
-  if (!clamp?.writeChar || !bytes) { alert('Enter hex bytes like: ab cd 04 00 0a 01 16 00'); return; }
-  logHex(clamp.name, bytes, '→ write', 'frame tx');
-  writeBytes(clamp.writeChar, bytes).catch((e) => alert(`Write failed: ${e.message}`));
-});
 
 // Redraw the rolling window even when no new data arrives.
 setInterval(drawChart, 5000);
