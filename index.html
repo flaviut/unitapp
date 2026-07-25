@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UT320i Web Bluetooth Explorer</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>UT320i Web Bluetooth Explorer</h1>
+    <p class="subtitle">Connect a UNI-T UT320i pipe clamp, inspect its BLE services, and capture frames to reverse-engineer the protocol.</p>
+  </header>
+
+  <section id="unsupported" class="banner hidden">
+    This browser does not support Web Bluetooth. Use Chrome or Edge on desktop/Android
+    (or the Bluefy browser on iOS). The page must be served over HTTPS or localhost.
+  </section>
+
+  <section class="controls">
+    <button id="connect">Connect device</button>
+    <button id="disconnect" disabled>Disconnect</button>
+    <label class="checkbox">
+      <input type="checkbox" id="acceptAll">
+      Show all BLE devices (not just UT/UNI-T names)
+    </label>
+    <span id="status" class="status">Not connected</span>
+  </section>
+
+  <section class="panel">
+    <h2>Live reading</h2>
+    <div id="reading" class="reading">–</div>
+    <p class="hint">Shows a decoded value once <code>decodeFrame()</code> in <code>app.js</code> knows the frame format. Until then, use the candidate table below to find the temperature bytes.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Services &amp; characteristics</h2>
+    <div id="services" class="services">None discovered yet.</div>
+  </section>
+
+  <section class="panel">
+    <h2>Write command</h2>
+    <p class="hint">Some UNI-T meters only stream after a handshake write. Pick a writable characteristic and send hex bytes (e.g. <code>ab cd 04 5e 01 d9</code>).</p>
+    <div class="write-row">
+      <select id="writeTarget"></select>
+      <input type="text" id="writeHex" placeholder="hex bytes, space separated">
+      <button id="writeBtn" disabled>Write</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Notification log</h2>
+    <div class="log-controls">
+      <button id="clearLog">Clear</button>
+      <button id="exportCsv">Export CSV</button>
+      <label class="checkbox"><input type="checkbox" id="showCandidates" checked> Show candidate temperature values</label>
+    </div>
+    <div id="log" class="log"></div>
+  </section>
+
+  <footer>
+    <p>Runs entirely in your browser — no server, no install. Source: <code>app.js</code>.</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
