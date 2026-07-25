@@ -3,13 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>UT320i Web Bluetooth Explorer</title>
+  <title>UT320i HVAC Thermometer</title>
   <link rel="stylesheet" href="style.css?v=__BUILD__">
 </head>
 <body>
-  <header>
-    <h1>UT320i Web Bluetooth Explorer</h1>
-    <p class="subtitle">Live pipe temperature from a UNI-T UT320i clamp over Web Bluetooth.</p>
+  <header class="topbar">
+    <div>
+      <h1>UT320i HVAC Thermometer</h1>
+      <p class="subtitle">UNI-T UT320i pipe clamps over Web Bluetooth.</p>
+    </div>
+    <div class="unit-toggle" id="unitToggle">
+      <button data-unit="F">°F</button><button data-unit="C">°C</button>
+    </div>
   </header>
 
   <section id="unsupported" class="banner hidden">
@@ -18,52 +23,47 @@
   </section>
 
   <section class="controls">
-    <button id="connect">Connect device</button>
-    <button id="disconnect" disabled>Disconnect</button>
-    <button id="probe" disabled>Probe handshake</button>
-    <label class="checkbox">
-      <input type="checkbox" id="acceptAll">
-      Show all BLE devices (not just UT/UNI-T names)
-    </label>
-    <span id="status" class="status">Not connected</span>
+    <button id="connect">＋ Add clamp</button>
+    <label class="checkbox"><input type="checkbox" id="keepAwake"> Keep screen awake</label>
+    <span id="status" class="status"></span>
+  </section>
+
+  <section id="clamps" class="cards"></section>
+
+  <section class="panel hidden" id="deltaPanel">
+    <h2>ΔT <span class="hint" id="deltaHint"></span></h2>
+    <div id="delta" class="reading">–</div>
   </section>
 
   <section class="panel">
-    <h2>Live reading</h2>
-    <div id="reading" class="reading">–</div>
-    <canvas id="chart" class="chart"></canvas>
+    <h2>Trend <span class="hint">last 10 minutes</span></h2>
+    <canvas id="chart" class="chart tall"></canvas>
     <div class="stats-row">
-      <span id="stats" class="hint"></span>
-      <button id="resetStats" class="small">Reset</button>
-      <button id="exportReadings" class="small">Export readings CSV</button>
+      <button id="resetSession" class="small">Reset session</button>
+      <button id="exportReadings" class="small">Download CSV</button>
+      <button id="copyReadings" class="small">Copy CSV</button>
     </div>
   </section>
 
-  <section class="panel">
-    <h2>Services &amp; characteristics</h2>
-    <div id="services" class="services">None discovered yet.</div>
-  </section>
-
-  <section class="panel">
-    <h2>Write command</h2>
-    <p class="hint">The clamp streams nothing until a command is written to FF01. "Probe handshake" tries known UNI-T Smart Measure commands automatically; you can also pick a preset or send arbitrary hex.</p>
+  <details class="panel" id="debugPanel">
+    <summary>Debug</summary>
+    <p class="hint">Everything here is for troubleshooting — use the copy buttons to paste into a bug report or chat.</p>
+    <div class="stats-row">
+      <button id="copyDiag" class="small">Copy diagnostics</button>
+      <button id="copyFrames" class="small">Copy raw frames</button>
+      <button id="exportCsv" class="small">Download raw frames CSV</button>
+      <button id="dumpGatt" class="small">Dump GATT services</button>
+      <label class="checkbox"><input type="checkbox" id="showRaw"> Log raw notifications</label>
+    </div>
+    <div id="services" class="services"></div>
     <div class="write-row">
       <select id="presets"><option value="">— preset —</option></select>
       <select id="writeTarget"></select>
       <input type="text" id="writeHex" placeholder="hex bytes, space separated">
       <button id="writeBtn" disabled>Write</button>
     </div>
-  </section>
-
-  <section class="panel">
-    <h2>Frame log</h2>
-    <div class="log-controls">
-      <button id="clearLog">Clear</button>
-      <button id="exportCsv">Export raw frames CSV</button>
-      <label class="checkbox"><input type="checkbox" id="showRaw"> Show raw notifications</label>
-    </div>
     <div id="log" class="log"></div>
-  </section>
+  </details>
 
   <footer>
     <p>Runs entirely in your browser — no server, no install. Build <code>__BUILD__</code>.</p>

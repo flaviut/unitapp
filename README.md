@@ -5,8 +5,15 @@ aimed at simple HVAC work (superheat/subcooling, delta-T across coils).
 
 ## Status
 
-**The protocol is decoded and live readings work** — the app shows the
-temperature in °C/°F with a trend chart, min/avg/max stats, and CSV export.
+**Working HVAC thermometer.** Features:
+
+- Multiple clamps at once (the UT320i supports up to 6) with per-clamp cards
+- Live **ΔT** between the first two clamps — supply/return, in/out of a coil
+- °F/°C toggle (remembered), 10-minute multi-line trend chart
+- Keep-screen-awake toggle for field use
+- Session CSV: download or one-tap copy (time, clamp, °C, °F)
+- Debug menu (collapsed by default): GATT dump, raw frame log, manual hex
+  writes, and one-tap "Copy diagnostics" for bug reports
 
 ### Wire protocol
 
@@ -76,6 +83,7 @@ Or host it on GitHub Pages — the app is static files with no build step.
 
 - [x] Decode the measurement frame (temperature)
 - [x] Trend chart + session logging (CSV)
+- [x] Multi-clamp support with live delta-T
 - [ ] Map battery/status fields
-- [ ] Multi-clamp support (the UT320i officially supports 6 concurrent clamps → delta-T)
-- [ ] Superheat/subcooling calculator (pair with pressure readings entered manually)
+- [ ] Superheat/subcooling calculator (needs vetted refrigerant PT tables —
+  not shipping guessed saturation data)
