@@ -136,7 +136,7 @@ function setConn(clamp, text, connected) {
 
 function removeClamp(clamp) {
   clamp.removed = true;
-  rememberDevice(clamp.device.id, false);
+  rememberDevice(clamp.device, false);
   try { clamp.device.gatt.disconnect(); } catch { /* already gone */ }
   clamp.el.card.remove();
   clamps.splice(clamps.indexOf(clamp), 1);
@@ -338,7 +338,7 @@ async function adoptDevice(device) {
     };
     clamps.push(clamp);
     makeCard(clamp);
-    rememberDevice(device.id, true);
+    rememberDevice(device, true);
     device.addEventListener('gattserverdisconnected', () => {
       if (!clamp.removed) autoReconnect(clamp);
     });
@@ -348,28 +348,44 @@ async function adoptDevice(device) {
   catch { autoReconnect(clamp); }
 }
 
-function rememberedIds() {
-  try { return JSON.parse(localStorage.getItem('ut320i-devices') || '[]'); }
-  catch { return []; }
+function rememberedList() {
+  try {
+    return JSON.parse(localStorage.getItem('ut320i-devices') || '[]')
+      .map((e) => (typeof e === 'string' ? { id: e } : e));
+  } catch { return []; }
 }
 
-function rememberDevice(id, keep) {
-  const ids = rememberedIds().filter((x) => x !== id);
-  if (keep) ids.push(id);
-  localStorage.setItem('ut320i-devices', JSON.stringify(ids));
+function rememberDevice(device, keep) {
+  const list = rememberedList()
+    .filter((e) => e.id !== device.id && (!e.name || e.name !== device.name));
+  if (keep) list.push({ id: device.id, name: device.name || '' });
+  localStorage.setItem('ut320i-devices', JSON.stringify(list));
 }
 
 // Reconnect to previously-used clamps without the chooser. Key on Android:
 // a clamp that still holds its link to the phone stops advertising, so the
 // chooser can't see it — but a direct reconnect by permission still works.
+// Match by name as well as id in case Chrome rotates device ids.
+let reconnectNote = 'not attempted';
 async function reconnectRemembered() {
-  const ids = rememberedIds();
-  if (!ids.length || !navigator.bluetooth?.getDevices) return;
-  let devices = [];
-  try { devices = await navigator.bluetooth.getDevices(); } catch { return; }
-  for (const device of devices) {
-    if (ids.includes(device.id)) adoptDevice(device);
+  const list = rememberedList();
+  if (!list.length) { reconnectNote = 'no clamps remembered'; return; }
+  if (!navigator.bluetooth?.getDevices) {
+    reconnectNote = 'getDevices unsupported';
+    $('status').textContent =
+      'Auto-reconnect needs chrome://flags/#enable-web-bluetooth-new-permissions-backend';
+    return;
   }
+  let devices = [];
+  try { devices = await navigator.bluetooth.getDevices(); }
+  catch (e) { reconnectNote = `getDevices failed: ${e.message}`; return; }
+  const matched = devices.filter((d) =>
+    list.some((e) => e.id === d.id || (e.name && e.name === d.name)));
+  reconnectNote = `${list.length} remembered, ${devices.length} granted, ${matched.length} matched`;
+  if (!devices.length) {
+    $('status').textContent = 'Clamp permissions weren’t kept across reload — tap Add clamp';
+  }
+  matched.forEach(adoptDevice);
 }
 
 // A dropped clamp is normal in the field (walked to the truck, phone slept).
@@ -481,6 +497,7 @@ function diagText() {
   const lines = [
     `UT320i app diagnostics — build ${build} — ${new Date().toISOString()}`,
     `UA: ${navigator.userAgent}`,
+    `Auto-reconnect: ${reconnectNote}`,
     `Clamps (${clamps.length}):`,
     ...clamps.map((c) => {
       const last = c.readings[c.readings.length - 1];
