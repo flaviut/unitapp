@@ -133,6 +133,7 @@ function setConn(clamp, text, connected) {
 
 function removeClamp(clamp) {
   clamp.removed = true;
+  rememberDevice(clamp.device.id, false);
   try { clamp.device.gatt.disconnect(); } catch { /* already gone */ }
   clamp.el.card.remove();
   clamps.splice(clamps.indexOf(clamp), 1);
@@ -302,7 +303,13 @@ async function addClamp() {
     ],
     optionalServices: [UT_SERVICE],
   });
+  await adoptDevice(device);
+}
 
+// Wire up a device we're allowed to use — fresh from the chooser or
+// remembered from a previous visit — and get it streaming. A failed first
+// setup goes into the same retry loop as a dropped connection.
+async function adoptDevice(device) {
   let clamp = clamps.find((c) => c.device.id === device.id);
   if (!clamp) {
     clamp = {
@@ -316,12 +323,38 @@ async function addClamp() {
     };
     clamps.push(clamp);
     makeCard(clamp);
+    rememberDevice(device.id, true);
     device.addEventListener('gattserverdisconnected', () => {
       if (!clamp.removed) autoReconnect(clamp);
     });
   }
-  await setupClamp(clamp);
   syncWakeLock();
+  try { await setupClamp(clamp); }
+  catch { autoReconnect(clamp); }
+}
+
+function rememberedIds() {
+  try { return JSON.parse(localStorage.getItem('ut320i-devices') || '[]'); }
+  catch { return []; }
+}
+
+function rememberDevice(id, keep) {
+  const ids = rememberedIds().filter((x) => x !== id);
+  if (keep) ids.push(id);
+  localStorage.setItem('ut320i-devices', JSON.stringify(ids));
+}
+
+// Reconnect to previously-used clamps without the chooser. Key on Android:
+// a clamp that still holds its link to the phone stops advertising, so the
+// chooser can't see it — but a direct reconnect by permission still works.
+async function reconnectRemembered() {
+  const ids = rememberedIds();
+  if (!ids.length || !navigator.bluetooth?.getDevices) return;
+  let devices = [];
+  try { devices = await navigator.bluetooth.getDevices(); } catch { return; }
+  for (const device of devices) {
+    if (ids.includes(device.id)) adoptDevice(device);
+  }
 }
 
 // A dropped clamp is normal in the field (walked to the truck, phone slept).
@@ -514,6 +547,7 @@ $('connect').addEventListener('click', () =>
     if (e.name !== 'NotFoundError') $('status').textContent = `Error: ${e.message}`;
   }));
 $('copyDiag').addEventListener('click', (e) => copyText(diagText(), e.target));
+reconnectRemembered();
 
 // Redraw the rolling window even when no new data arrives.
 setInterval(drawChart, 5000);

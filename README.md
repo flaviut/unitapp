@@ -12,7 +12,9 @@ connect, temperatures, ΔT, superheat/subcool, and a trend chart:
 - Live **ΔT** between the first two clamps — supply/return, in/out of a coil
 - °F/°C toggle (remembered), 10-minute multi-line trend chart
 - No babysitting: the screen stays awake automatically while a clamp is
-  connected, and dropped clamps reconnect themselves
+  connected, dropped clamps reconnect themselves, and remembered clamps
+  reconnect on the next visit without the Bluetooth chooser (which also
+  sidesteps clamps that stop advertising while they hold a stale link)
 - **Superheat/subcool calculator**: enter gauge pressure, pick the clamp on
   the line — supports R-410A, R-32, R-454B, R-22, R-407C, R-404A, R-134a.
   Saturation tables generated with CoolProp 8.0 (NIST-grade equations of
