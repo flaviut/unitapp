@@ -19,5 +19,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Stamp build id for cache busting
+        run: |
+          build="$(git rev-parse --short HEAD)"
+          sed -i "s/__BUILD__/${build}/g" index.html
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -am "Stamp build ${build}"
       - name: Publish to gh-pages branch
         run: git push --force origin HEAD:gh-pages
