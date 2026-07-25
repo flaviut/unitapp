@@ -373,17 +373,19 @@ async function setupClamp(clamp) {
   startStream(clamp).catch(() => { /* connection died; auto-reconnect handles it */ });
 }
 
-// The clamp streams nothing until commanded. Resend START a few times in
-// case the first write lands before notifications are fully live.
+// The clamp streams nothing until commanded. Keep nudging with START until
+// data flows — quickly at first, then every 10 s for as long as we're
+// connected, so a clamp that wakes up late still comes through on its own.
 async function startStream(clamp) {
-  if (!clamp.writeChar) return;
-  for (let i = 0; i < 3 && clamp.connected; i++) {
+  if (!clamp.writeChar) { setConn(clamp, 'error: no command channel', true); return; }
+  const gen = clamp.startGen = (clamp.startGen || 0) + 1;
+  for (let i = 0; clamp.connected && clamp.startGen === gen; i++) {
     const before = clamp.readings.length;
     await writeBytes(clamp.writeChar, START_CMD);
-    await new Promise((r) => setTimeout(r, 2500));
+    await new Promise((r) => setTimeout(r, i < 3 ? 2500 : 10000));
     if (clamp.readings.length > before) return;
+    if (i === 2) setConn(clamp, 'connected — no data', true);
   }
-  if (clamp.connected) setConn(clamp, 'connected — no data', true);
 }
 
 function onNotification(clamp, ev) {
