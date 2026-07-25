@@ -136,7 +136,6 @@ function setConn(clamp, text, connected) {
 
 function removeClamp(clamp) {
   clamp.removed = true;
-  rememberDevice(clamp.device, false);
   try { clamp.device.gatt.disconnect(); } catch { /* already gone */ }
   clamp.el.card.remove();
   clamps.splice(clamps.indexOf(clamp), 1);
@@ -158,8 +157,13 @@ function renderClamp(clamp) {
 function renderBattery(clamp) {
   if (clamp.battery == null) return;
   const max = clamp.batteryMax || 4;
-  clamp.el.batt.textContent = '▮'.repeat(Math.min(clamp.battery, max)) +
-    '▯'.repeat(Math.max(0, max - clamp.battery));
+  const frac = Math.max(0, Math.min(1, clamp.battery / max));
+  clamp.el.batt.innerHTML =
+    `<svg viewBox="0 0 28 14" width="28" height="14" role="img" aria-label="battery ${clamp.battery}/${max}">
+       <rect x="1" y="1.5" width="23" height="11" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/>
+       <rect x="25.4" y="4.5" width="2.4" height="5" rx="1.2" fill="currentColor"/>
+       <rect x="3.4" y="3.9" width="${(18.2 * frac).toFixed(1)}" height="6.2" rx="1" fill="currentColor"/>
+     </svg>`;
   clamp.el.batt.title = `battery ${clamp.battery}/${max}`;
   clamp.el.batt.classList.toggle('low', clamp.battery <= 2);
 }
@@ -318,13 +322,7 @@ async function addClamp() {
     ],
     optionalServices: [UT_SERVICE],
   });
-  await adoptDevice(device);
-}
 
-// Wire up a device we're allowed to use — fresh from the chooser or
-// remembered from a previous visit — and get it streaming. A failed first
-// setup goes into the same retry loop as a dropped connection.
-async function adoptDevice(device) {
   let clamp = clamps.find((c) => c.device.id === device.id);
   if (!clamp) {
     clamp = {
@@ -338,54 +336,15 @@ async function adoptDevice(device) {
     };
     clamps.push(clamp);
     makeCard(clamp);
-    rememberDevice(device, true);
     device.addEventListener('gattserverdisconnected', () => {
       if (!clamp.removed) autoReconnect(clamp);
     });
   }
   syncWakeLock();
+  // A failed first setup (link dropped mid-discovery) goes into the same
+  // retry loop as a dropped connection instead of dying on the status line.
   try { await setupClamp(clamp); }
   catch { autoReconnect(clamp); }
-}
-
-function rememberedList() {
-  try {
-    return JSON.parse(localStorage.getItem('ut320i-devices') || '[]')
-      .map((e) => (typeof e === 'string' ? { id: e } : e));
-  } catch { return []; }
-}
-
-function rememberDevice(device, keep) {
-  const list = rememberedList()
-    .filter((e) => e.id !== device.id && (!e.name || e.name !== device.name));
-  if (keep) list.push({ id: device.id, name: device.name || '' });
-  localStorage.setItem('ut320i-devices', JSON.stringify(list));
-}
-
-// Reconnect to previously-used clamps without the chooser. Key on Android:
-// a clamp that still holds its link to the phone stops advertising, so the
-// chooser can't see it — but a direct reconnect by permission still works.
-// Match by name as well as id in case Chrome rotates device ids.
-let reconnectNote = 'not attempted';
-async function reconnectRemembered() {
-  const list = rememberedList();
-  if (!list.length) { reconnectNote = 'no clamps remembered'; return; }
-  if (!navigator.bluetooth?.getDevices) {
-    reconnectNote = 'getDevices unsupported';
-    $('status').textContent =
-      'Auto-reconnect needs chrome://flags/#enable-web-bluetooth-new-permissions-backend';
-    return;
-  }
-  let devices = [];
-  try { devices = await navigator.bluetooth.getDevices(); }
-  catch (e) { reconnectNote = `getDevices failed: ${e.message}`; return; }
-  const matched = devices.filter((d) =>
-    list.some((e) => e.id === d.id || (e.name && e.name === d.name)));
-  reconnectNote = `${list.length} remembered, ${devices.length} granted, ${matched.length} matched`;
-  if (!devices.length) {
-    $('status').textContent = 'Clamp permissions weren’t kept across reload — tap Add clamp';
-  }
-  matched.forEach(adoptDevice);
 }
 
 // A dropped clamp is normal in the field (walked to the truck, phone slept).
@@ -497,7 +456,6 @@ function diagText() {
   const lines = [
     `UT320i app diagnostics — build ${build} — ${new Date().toISOString()}`,
     `UA: ${navigator.userAgent}`,
-    `Auto-reconnect: ${reconnectNote}`,
     `Clamps (${clamps.length}):`,
     ...clamps.map((c) => {
       const last = c.readings[c.readings.length - 1];
@@ -584,7 +542,6 @@ $('connect').addEventListener('click', () =>
     if (e.name !== 'NotFoundError') $('status').textContent = `Error: ${e.message}`;
   }));
 $('copyDiag').addEventListener('click', (e) => copyText(diagText(), e.target));
-reconnectRemembered();
 
 // Redraw the rolling window even when no new data arrives.
 setInterval(drawChart, 5000);
