@@ -110,6 +110,7 @@ function makeCard(clamp) {
     `<div class="card-head">
        <span class="dot" style="background:${clamp.color}"></span>
        <span class="name">${clamp.name}</span>
+       <span class="batt"></span>
        <span class="conn">connecting…</span>
        <span class="spacer"></span>
        <button class="small remove" title="Remove">✕</button>
@@ -119,9 +120,11 @@ function makeCard(clamp) {
   clamp.el = {
     card,
     name: card.querySelector('.name'),
+    batt: card.querySelector('.batt'),
     conn: card.querySelector('.conn'),
     reading: card.querySelector('.reading'),
   };
+  renderBattery(clamp);
   card.querySelector('.remove').addEventListener('click', () => removeClamp(clamp));
 }
 
@@ -147,6 +150,18 @@ function renderClamp(clamp) {
   const last = clamp.readings[clamp.readings.length - 1];
   if (!last) return;
   clamp.el.reading.textContent = fmtAbs(last.c);
+}
+
+// Battery arrives in the cmd 0x08 handshake response as [scale, level]
+// (observed: 04 04 at 3 display bars, 04 03 at 2), so it refreshes on each
+// connect rather than live. level−1 ≈ bars shown on the clamp's display.
+function renderBattery(clamp) {
+  if (clamp.battery == null) return;
+  const max = clamp.batteryMax || 4;
+  clamp.el.batt.textContent = '▮'.repeat(Math.min(clamp.battery, max)) +
+    '▯'.repeat(Math.max(0, max - clamp.battery));
+  clamp.el.batt.title = `battery ${clamp.battery}/${max}`;
+  clamp.el.batt.classList.toggle('low', clamp.battery <= 2);
 }
 
 function updateDelta() {
@@ -439,9 +454,14 @@ function onNotification(clamp, ev) {
       drawChart();
     } else {
       // Status/info responses: keep the latest payload per command for
-      // diagnostics (field meanings not yet mapped).
+      // diagnostics.
       clamp.info = clamp.info || {};
       clamp.info[f[3]] = hex(f.slice(4, f.length - 2));
+      if (f[3] === 0x08 && f.length >= 8) {
+        clamp.batteryMax = f[4] || 4;
+        clamp.battery = f[5];
+        renderBattery(clamp);
+      }
     }
   }
 }
