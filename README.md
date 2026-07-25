@@ -81,8 +81,11 @@ Or host it on GitHub Pages — the app is static files with no build step.
 - The 8 reserved bytes before and 4 after the temperature in `cmd 0x01`
   frames are always zero so far — possibly slots for min/max or multi-probe
   modes.
-- The trailing status byte (`0xF3`) is unmapped — battery level and alarm
-  flags presumably live there or in the `cmd 0x08`/`0x06` responses.
+- Battery is **not** in the live frame: two clamps captured simultaneously
+  at 2 and 3 battery bars both reported status byte `0xF3` with all
+  reserved bytes zero. Remaining candidates: the `cmd 0x08`/`0x06`
+  handshake payloads (now included in Copy diagnostics — capture right
+  after a fresh connect) or the `FF03`–`FF0B` config registers.
 - The proper `AA BB`-dialect request commands are unknown; the app wakes the
   stream with the UT171 START frame, which works fine.
 
@@ -92,6 +95,7 @@ Or host it on GitHub Pages — the app is static files with no build step.
 - [x] Trend chart
 - [x] Multi-clamp support with live delta-T
 - [x] Superheat/subcooling calculator (CoolProp-generated PT tables)
-- [ ] Map battery/status fields — the live-frame status byte and cmd
-  0x08/0x06 payloads are included in "Copy diagnostics" (debug menu);
-  capture them at different battery levels to decode
+- [ ] Map the battery field — ruled out of the live frame (see open
+  questions); next step is comparing cmd 0x08/0x06 payloads from "Copy
+  diagnostics" for clamps at different battery levels, captured right
+  after connecting
