@@ -1,25 +1,28 @@
 'use strict';
 
 // ---------------------------------------------------------------------------
-// UT320i Web Bluetooth explorer
+// UT320i Web Bluetooth app
 //
-// GATT layout confirmed via nRF Connect (2026-07-24, UT320i SN:251101079):
+// GATT layout (confirmed on two units, SN:251101079 and SN:260500277):
 //
 //   Service 0xFF12 (vendor, Realtek chip)
 //     FF01 [write-no-response]  command channel
-//     FF02 [notify]             data channel — silent until a command arrives
-//     FF03..FF0B [read/write]   config registers (FF05 = user id "000001",
-//                               FF06 = device name "UT320i SN:...")
-//     FFF0, FFF1 [write]
-//   0x180A Device Information, plus a Realtek OTA service (d0ff...)
+//     FF02 [notify]             data channel — silent until commanded
+//     FF03..FF0B [read/write]   config registers (FF05 = user id,
+//                               FF06 = device name)
 //
-// Related UNI-T "Smart Measure" meters (UT171/UT219P, see README) frame
-// everything as:  AB CD <len u16> <cmd> <payload...> <checksum u16 LE>
-// where checksum = additive sum of bytes from offset 2. They emit nothing
-// until a START command. The UT320i likely speaks the same dialect over
-// FF01/FF02 — the auto-probe below tries the known START variants and logs
-// which one wakes the stream. Once frames arrive, use the candidate columns
-// to find the temperature and finalize decodeFrame().
+// Wire protocol (decoded from live captures, checksum verified on 8 frames):
+//
+//   AA BB <len u8> <cmd u8> <payload...> <checksum u16 BE>
+//     len      = byte count after the len field (cmd + payload + checksum)
+//     checksum = additive sum of all bytes from the AA header through the
+//                end of payload, big-endian
+//
+//   cmd 0x01 (len 0x14): live measurement
+//     payload: 8 reserved/zero bytes, float32 LE temperature in °C,
+//              4 reserved/zero bytes, 1 status byte (0xF3 observed)
+//   cmd 0x08 (payload 04 04) and cmd 0x06: status/info responses seen
+//     right after the handshake probe
 // ---------------------------------------------------------------------------
 
 const UT_SERVICE = 0xff12;
@@ -33,9 +36,9 @@ const UT_CHAR_LABELS = {
   '0000ff06-0000-1000-8000-00805f9b34fb': 'device name',
 };
 
-// Known command frames from reverse-engineered UNI-T Smart Measure meters.
-// Byte sequences are verbatim from the ble-multimeter protocol docs; the
-// auto-probe sends each in turn until the clamp starts notifying on FF02.
+// Writing these wakes the stream (frames cmd 0x08/0x06 come back as
+// responses, then cmd 0x01 live data flows ~every 1.3 s). Borrowed from the
+// UT171/UT219P dialect; the clamp answers in its own AA BB framing.
 const PROBE_COMMANDS = [
   { label: 'START stream (UT171)', hex: 'ab cd 04 00 0a 01 16 00' },
   { label: 'live-data poll (UT219P)', hex: 'ab cd 00 04 05 00 09 00' },
@@ -48,14 +51,8 @@ const CANDIDATE_SERVICES = [
   UT_SERVICE,
   'battery_service',
   'device_information',
-  'environmental_sensing',
-  'health_thermometer',
   'generic_access',
   '0000d0ff-3c17-d293-8e48-14fe2e4da212', // Realtek OTA (on the UT320i)
-  0xFFE0,
-  0xFFF0,
-  '6e400001-b5a3-f393-e0a9-e50e24dcca9e', // Nordic UART
-  '49535343-fe7d-4ae5-8fa9-9fafd205e455', // Microchip UART (older UNI-T meters)
 ];
 
 const $ = (id) => document.getElementById(id);
@@ -65,52 +62,24 @@ let server = null;
 let utWriteChar = null;
 // [{time, serviceUuid, charUuid, bytes}]
 const frames = [];
+// [{time, c}] decoded temperature readings
+const readings = [];
 // charUuid -> writable BluetoothRemoteGATTCharacteristic
 const writableChars = new Map();
 let rxBuffer = new Uint8Array(0);
 
-// --- Decoding -------------------------------------------------------------
+// --- Protocol -------------------------------------------------------------
 
-// TODO: finalize once a live frame is captured. UT171-family live frames are
-// AB CD <len u16 LE> 02 <flags u16> <mode u8> <range u8> <float32 LE value>
-// <precision/overload u8> <unit u8> <checksum u16 LE>. Return {value, unit}
-// or null.
+// Parse one validated AA BB frame into a reading, or null.
 function decodeFrame(bytes) {
-  if (bytes.length >= 17 && bytes[0] === 0xab && bytes[1] === 0xcd && bytes[4] === 0x02) {
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    const value = view.getFloat32(9, true);
-    if (Number.isFinite(value) && value > -60 && value < 400) {
-      return { value: value.toFixed(1), unit: '°C?' };
-    }
-  }
-  return null;
-}
-
-// Plausible pipe temperatures for an HVAC clamp, used to rank candidates.
-const PLAUSIBLE_C = [-50, 150];
-
-function candidateValues(bytes) {
-  const out = [];
+  if (bytes[3] !== 0x01 || bytes.length < 21) return null;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  for (let off = 0; off + 2 <= bytes.length; off++) {
-    for (const [scale, label] of [[10, '/10'], [100, '/100']]) {
-      const v = view.getInt16(off, true) / scale;
-      if (v >= PLAUSIBLE_C[0] && v <= PLAUSIBLE_C[1] && v !== 0) {
-        out.push(`@${off} i16${label}=${v.toFixed(scale === 10 ? 1 : 2)}`);
-      }
-    }
-    if (off + 4 <= bytes.length) {
-      const f = view.getFloat32(off, true);
-      if (Number.isFinite(f) && f >= PLAUSIBLE_C[0] && f <= PLAUSIBLE_C[1] && Math.abs(f) > 1e-3) {
-        out.push(`@${off} f32=${f.toFixed(2)}`);
-      }
-    }
-  }
-  return out;
+  const c = view.getFloat32(12, true);
+  if (!Number.isFinite(c) || c < -60 || c > 400) return null;
+  return { c, status: bytes.length >= 22 ? bytes[20] : null };
 }
 
-// Reassemble AB CD ... frames that may span several notifications. Tries both
-// byte orders for the length field since docs disagree between models.
+// Reassemble AA BB frames that may span notifications; drop checksum failures.
 function extractUtFrames(chunk) {
   const merged = new Uint8Array(rxBuffer.length + chunk.length);
   merged.set(rxBuffer);
@@ -121,33 +90,29 @@ function extractUtFrames(chunk) {
   while (true) {
     let start = -1;
     for (let i = 0; i + 1 < rxBuffer.length; i++) {
-      if (rxBuffer[i] === 0xab && rxBuffer[i + 1] === 0xcd) { start = i; break; }
+      if (rxBuffer[i] === 0xaa && rxBuffer[i + 1] === 0xbb) { start = i; break; }
     }
-    if (start < 0) { rxBuffer = new Uint8Array(0); break; }
-    if (start > 0) rxBuffer = rxBuffer.slice(start);
-    if (rxBuffer.length < 6) break;
-
-    const lenLE = rxBuffer[2] | (rxBuffer[3] << 8);
-    const lenBE = (rxBuffer[2] << 8) | rxBuffer[3];
-    const total = (len) => 4 + len; // header(2) + len(2) + body incl. checksum
-    let frameLen = 0;
-    for (const len of [lenLE, lenBE]) {
-      if (len >= 3 && len <= 512 && rxBuffer.length >= total(len)) {
-        const end = total(len);
-        let sum = 0;
-        for (let i = 2; i < end - 2; i++) sum = (sum + rxBuffer[i]) & 0xffff;
-        const chk = rxBuffer[end - 2] | (rxBuffer[end - 1] << 8);
-        if (sum === chk) { frameLen = end; break; }
-      }
-    }
-    if (!frameLen) {
-      // No checksum-valid frame yet; wait for more data unless the buffer is
-      // clearly garbage, then drop the header and rescan.
-      if (rxBuffer.length > 512) rxBuffer = rxBuffer.slice(2);
+    if (start < 0) {
+      if (rxBuffer.length > 1) rxBuffer = rxBuffer.slice(rxBuffer.length - 1);
       break;
     }
-    found.push(rxBuffer.slice(0, frameLen));
-    rxBuffer = rxBuffer.slice(frameLen);
+    if (start > 0) rxBuffer = rxBuffer.slice(start);
+    if (rxBuffer.length < 4) break;
+
+    const len = rxBuffer[2];
+    const total = 3 + len;
+    if (len < 3 || len > 250) { rxBuffer = rxBuffer.slice(2); continue; }
+    if (rxBuffer.length < total) break;
+
+    let sum = 0;
+    for (let i = 0; i < total - 2; i++) sum = (sum + rxBuffer[i]) & 0xffff;
+    const chk = (rxBuffer[total - 2] << 8) | rxBuffer[total - 1];
+    if (sum === chk) {
+      found.push(rxBuffer.slice(0, total));
+      rxBuffer = rxBuffer.slice(total);
+    } else {
+      rxBuffer = rxBuffer.slice(2);
+    }
   }
   return found;
 }
@@ -186,14 +151,48 @@ function logLine(html, cls = 'frame') {
 }
 
 function logFrame(frame, tag) {
+  if (!$('showRaw').checked) return;
   const t = frame.time.toISOString().slice(11, 23);
-  let html = `<span class="t">${t}</span> <span class="u">${tag || shortUuid(frame.charUuid)}</span> ` +
-    `<span class="hex">${hex(frame.bytes)}</span> <span class="ascii">${ascii(frame.bytes)}</span>`;
-  if ($('showCandidates').checked) {
-    const cands = candidateValues(frame.bytes);
-    if (cands.length) html += `<div class="cands">${cands.join('  ')}</div>`;
-  }
-  logLine(html);
+  logLine(`<span class="t">${t}</span> <span class="u">${tag || shortUuid(frame.charUuid)}</span> ` +
+    `<span class="hex">${hex(frame.bytes)}</span> <span class="ascii">${ascii(frame.bytes)}</span>`);
+}
+
+// --- Live reading display -------------------------------------------------
+
+function pushReading(r, time) {
+  readings.push({ time, c: r.c });
+  const f = r.c * 9 / 5 + 32;
+  $('reading').innerHTML =
+    `${r.c.toFixed(2)}<span class="unit">°C</span> <span class="alt">${f.toFixed(1)} °F</span>`;
+
+  const cs = readings.map((x) => x.c);
+  const min = Math.min(...cs), max = Math.max(...cs);
+  const avg = cs.reduce((a, x) => a + x, 0) / cs.length;
+  $('stats').textContent =
+    `min ${min.toFixed(2)} · avg ${avg.toFixed(2)} · max ${max.toFixed(2)} °C · ${cs.length} samples`;
+  drawChart(cs, min, max);
+}
+
+function drawChart(cs, min, max) {
+  const canvas = $('chart');
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== w * dpr) { canvas.width = w * dpr; canvas.height = h * dpr; }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  const n = Math.min(cs.length, 900);
+  const data = cs.slice(-n);
+  const lo = min - 0.2, hi = max + 0.2;
+  const x = (i) => (n <= 1 ? w : (i / (n - 1)) * (w - 4) + 2);
+  const y = (v) => h - 4 - ((v - lo) / (hi - lo)) * (h - 8);
+
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#0a66c2';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  data.forEach((v, i) => (i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v))));
+  ctx.stroke();
 }
 
 // --- BLE ------------------------------------------------------------------
@@ -230,15 +229,20 @@ async function connect() {
 function onNotification(service, ch, ev) {
   const dv = ev.target.value;
   const bytes = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
-  const frame = { time: new Date(), serviceUuid: service.uuid, charUuid: ch.uuid, bytes };
-  frames.push(frame);
-  logFrame(frame);
+  const time = new Date();
+  frames.push({ time, serviceUuid: service.uuid, charUuid: ch.uuid, bytes });
+  logFrame({ time, charUuid: ch.uuid, bytes });
 
-  if (ch.uuid === UT_NOTIFY_UUID) {
-    for (const f of extractUtFrames(bytes)) {
-      logFrame({ time: new Date(), serviceUuid: service.uuid, charUuid: ch.uuid, bytes: f }, '✔frame');
-      const decoded = decodeFrame(f);
-      if (decoded) $('reading').textContent = `${decoded.value} ${decoded.unit}`;
+  if (ch.uuid !== UT_NOTIFY_UUID) return;
+  for (const f of extractUtFrames(bytes)) {
+    const decoded = decodeFrame(f);
+    if (decoded) {
+      pushReading(decoded, time);
+    } else {
+      // Non-measurement frame (status/info) — always show these.
+      logLine(`<span class="t">${time.toISOString().slice(11, 23)}</span> ` +
+        `<span class="u">cmd 0x${f[3].toString(16).padStart(2, '0')}</span> ` +
+        `<span class="hex">${hex(f)}</span>`, 'frame ok');
     }
   }
 }
@@ -333,32 +337,27 @@ async function writeBytes(ch, bytes) {
   }
 }
 
-// Send each known Smart Measure command until the clamp starts notifying.
+// Send wake-up commands until live data flows.
 async function probeHandshake() {
   if (!utWriteChar) return;
   for (const cmd of PROBE_COMMANDS) {
-    const before = frames.length;
+    const before = readings.length + frames.length;
     logLine(`→ probing FF01 with ${cmd.label}: ${cmd.hex}`, 'frame tx');
     await writeBytes(utWriteChar, parseHex(cmd.hex));
     await new Promise((r) => setTimeout(r, 1800));
-    if (frames.length > before) {
-      logLine(`✓ "${cmd.label}" got a response — protocol dialect identified`, 'frame ok');
+    if (readings.length + frames.length > before) {
+      logLine('✓ clamp is streaming', 'frame ok');
       return;
     }
   }
-  logLine('✗ no probe elicited data. Capture the official app\'s handshake ' +
-    'via Android HCI snoop log and replay it in the Write box.', 'frame err');
+  logLine('✗ no probe elicited data — try again or use the Write box.', 'frame err');
 }
 
-function exportCsv() {
-  const rows = [['iso_time', 'service_uuid', 'characteristic_uuid', 'hex']];
-  for (const f of frames) {
-    rows.push([f.time.toISOString(), f.serviceUuid, f.charUuid, hex(f.bytes)]);
-  }
+function downloadCsv(rows, name) {
   const blob = new Blob([rows.map((r) => r.join(',')).join('\n')], { type: 'text/csv' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `ut320i-frames-${Date.now()}.csv`;
+  a.download = name;
   a.click();
   URL.revokeObjectURL(a.href);
 }
@@ -392,4 +391,19 @@ $('writeBtn').addEventListener('click', () => {
   writeBytes(ch, bytes).catch((e) => alert(`Write failed: ${e.message}`));
 });
 $('clearLog').addEventListener('click', () => { $('log').textContent = ''; });
-$('exportCsv').addEventListener('click', exportCsv);
+$('resetStats').addEventListener('click', () => {
+  readings.length = 0;
+  $('stats').textContent = '';
+  $('reading').textContent = '–';
+  const ctx = $('chart').getContext('2d');
+  ctx.clearRect(0, 0, $('chart').width, $('chart').height);
+});
+$('exportReadings').addEventListener('click', () =>
+  downloadCsv(
+    [['iso_time', 'temp_c'], ...readings.map((r) => [r.time.toISOString(), r.c.toFixed(3)])],
+    `ut320i-readings-${Date.now()}.csv`));
+$('exportCsv').addEventListener('click', () =>
+  downloadCsv(
+    [['iso_time', 'service_uuid', 'characteristic_uuid', 'hex'],
+     ...frames.map((f) => [f.time.toISOString(), f.serviceUuid, f.charUuid, hex(f.bytes)])],
+    `ut320i-frames-${Date.now()}.csv`));

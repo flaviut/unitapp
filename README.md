@@ -5,8 +5,29 @@ aimed at simple HVAC work (superheat/subcooling, delta-T across coils).
 
 ## Status
 
-The app is a **protocol explorer** with a partially-known protocol. The GATT
-layout was confirmed with an nRF Connect capture (UT320i SN:251101079):
+**The protocol is decoded and live readings work** — the app shows the
+temperature in °C/°F with a trend chart, min/avg/max stats, and CSV export.
+
+### Wire protocol
+
+Confirmed on two units (SN:251101079, SN:260500277). Framing on the FF02
+notify characteristic:
+
+```
+AA BB <len u8> <cmd u8> <payload…> <checksum u16 BE>
+```
+
+- `len` counts every byte after the len field (cmd + payload + checksum)
+- `checksum` = additive sum of all bytes from the `AA` header through the end
+  of payload, stored big-endian
+- `cmd 0x01` (len `0x14`): live measurement — 8 reserved bytes, **float32 LE
+  temperature in °C**, 4 reserved bytes, 1 status byte (`0xF3` observed)
+- `cmd 0x08`, `cmd 0x06`: status/info responses right after the handshake
+- The clamp streams nothing until something is written to FF01; the UT171
+  START command (`ab cd 04 00 0a 01 16 00`) wakes it, after which `cmd 0x01`
+  frames arrive roughly every 1.3 s
+
+### GATT layout
 
 | Service | Characteristic | Role |
 |---|---|---|
@@ -16,15 +37,10 @@ layout was confirmed with an nRF Connect capture (UT320i SN:251101079):
 | `0x180A` | standard | device information |
 | `d0ff…` | standard | Realtek OTA update service |
 
-Related UNI-T "Smart Measure" meters (UT171, UT219P — see the
-[ble-multimeter protocol docs](https://github.com/ble-multimeter/multimeter/tree/main/docs/protocols))
-frame commands as `AB CD <len u16> <cmd> <payload…> <checksum u16 LE>` with an
-additive checksum, and emit nothing until a START command. On connect the app
-auto-probes the known START variants against `FF01` and reports which dialect
-the clamp answers to. Every frame is hex-dumped with candidate int16 (/10,
-/100) and float32 little-endian interpretations in the plausible −50…150 °C
-range — warm the clamp in your hand and watch which candidate tracks the
-meter's own display, then finalize `decodeFrame()` in `app.js`.
+The `AA BB` dialect is a close cousin of the `AB CD` framing used by related
+UNI-T "Smart Measure" meters (UT171, UT219P — see the
+[ble-multimeter protocol docs](https://github.com/ble-multimeter/multimeter/tree/main/docs/protocols)),
+whose START commands the clamp happily accepts as a wake-up.
 
 ## Running it
 
@@ -46,29 +62,20 @@ npx serve .        # or: python3 -m http.server
 
 Or host it on GitHub Pages — the app is static files with no build step.
 
-## Reverse-engineering workflow
+## Open questions
 
-1. Open the app in Chrome, click **Connect device**, pick the UT320i.
-2. If no services appear, the clamp uses a service UUID not in
-   `CANDIDATE_SERVICES` (`app.js`). Find the real UUIDs with
-   [nRF Connect for Mobile](https://play.google.com/store/apps/details?id=no.nordicsemi.android.mcp)
-   and add them to the list (Web Bluetooth can only touch services it declared
-   up front).
-3. If the clamp is silent until UNI-T's *Smart Measure* app talks to it, sniff
-   the handshake (Android: developer-options **Bluetooth HCI snoop log**, view
-   in Wireshark) and replay it with the **Write command** box.
-4. Export captured frames to CSV, work out the framing, implement
-   `decodeFrame()`.
-
-Prior art worth reading — other UNI-T BLE meters have been reverse-engineered
-and one project already does browser-based UNI-T logging over Web Bluetooth:
-
-- <https://github.com/topics/uni-t>
-- <https://github.com/ble-multimeter/multimeter>
+- The 8 reserved bytes before and 4 after the temperature in `cmd 0x01`
+  frames are always zero so far — possibly slots for min/max or multi-probe
+  modes.
+- The trailing status byte (`0xF3`) is unmapped — battery level and alarm
+  flags presumably live there or in the `cmd 0x08`/`0x06` responses.
+- The proper `AA BB`-dialect request commands are unknown; the app wakes the
+  stream with the UT171 START frame, which works fine.
 
 ## Roadmap
 
-- [ ] Decode the measurement frame (temperature, battery, units)
+- [x] Decode the measurement frame (temperature)
+- [x] Trend chart + session logging (CSV)
+- [ ] Map battery/status fields
 - [ ] Multi-clamp support (the UT320i officially supports 6 concurrent clamps → delta-T)
-- [ ] Trend chart + session logging
 - [ ] Superheat/subcooling calculator (pair with pressure readings entered manually)

@@ -9,7 +9,7 @@
 <body>
   <header>
     <h1>UT320i Web Bluetooth Explorer</h1>
-    <p class="subtitle">Connect a UNI-T UT320i pipe clamp, inspect its BLE services, and capture frames to reverse-engineer the protocol.</p>
+    <p class="subtitle">Live pipe temperature from a UNI-T UT320i clamp over Web Bluetooth.</p>
   </header>
 
   <section id="unsupported" class="banner hidden">
@@ -31,7 +31,12 @@
   <section class="panel">
     <h2>Live reading</h2>
     <div id="reading" class="reading">–</div>
-    <p class="hint">Shows a decoded value once <code>decodeFrame()</code> in <code>app.js</code> knows the frame format. Until then, use the candidate table below to find the temperature bytes.</p>
+    <canvas id="chart" class="chart"></canvas>
+    <div class="stats-row">
+      <span id="stats" class="hint"></span>
+      <button id="resetStats" class="small">Reset</button>
+      <button id="exportReadings" class="small">Export readings CSV</button>
+    </div>
   </section>
 
   <section class="panel">
@@ -51,11 +56,11 @@
   </section>
 
   <section class="panel">
-    <h2>Notification log</h2>
+    <h2>Frame log</h2>
     <div class="log-controls">
       <button id="clearLog">Clear</button>
-      <button id="exportCsv">Export CSV</button>
-      <label class="checkbox"><input type="checkbox" id="showCandidates" checked> Show candidate temperature values</label>
+      <button id="exportCsv">Export raw frames CSV</button>
+      <label class="checkbox"><input type="checkbox" id="showRaw"> Show raw notifications</label>
     </div>
     <div id="log" class="log"></div>
   </section>
