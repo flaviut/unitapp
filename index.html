@@ -8,23 +8,18 @@
 </head>
 <body>
   <header class="topbar">
-    <div>
-      <h1>UT320i HVAC Thermometer</h1>
-      <p class="subtitle">UNI-T UT320i pipe clamps over Web Bluetooth.</p>
-    </div>
+    <h1>UT320i</h1>
     <div class="unit-toggle" id="unitToggle">
       <button data-unit="F">°F</button><button data-unit="C">°C</button>
     </div>
   </header>
 
   <section id="unsupported" class="banner hidden">
-    This browser does not support Web Bluetooth. Use Chrome or Edge on desktop/Android
-    (or the Bluefy browser on iOS). The page must be served over HTTPS or localhost.
+    This browser can't do Bluetooth. Use Chrome on Android/desktop, or Bluefy on iPhone.
   </section>
 
   <section class="controls">
-    <button id="connect">＋ Add clamp</button>
-    <label class="checkbox"><input type="checkbox" id="keepAwake"> Keep screen awake</label>
+    <button id="connect" class="big">＋ Add clamp</button>
     <span id="status" class="status"></span>
   </section>
 
@@ -32,7 +27,7 @@
 
   <section class="panel hidden" id="deltaPanel">
     <h2>ΔT <span class="hint" id="deltaHint"></span></h2>
-    <div id="delta" class="reading">–</div>
+    <div id="delta" class="reading"></div>
   </section>
 
   <section class="panel" id="shscPanel">
@@ -59,28 +54,27 @@
         <div class="hint" id="scDetail"></div>
       </div>
     </div>
-    <p class="hint">Saturation data computed with CoolProp 8.0 (NIST-grade equations of state); dew line for superheat, bubble line for subcool; gauge pressure at sea level.</p>
   </section>
 
   <section class="panel">
     <h2>Trend <span class="hint">last 10 minutes</span></h2>
     <canvas id="chart" class="chart tall"></canvas>
-    <div class="stats-row">
-      <button id="resetSession" class="small">Reset session</button>
-      <button id="exportReadings" class="small">Download CSV</button>
-      <button id="copyReadings" class="small">Copy CSV</button>
-    </div>
   </section>
 
   <details class="panel" id="debugPanel">
     <summary>Debug</summary>
-    <p class="hint">Everything here is for troubleshooting — use the copy buttons to paste into a bug report or chat.</p>
+    <p class="hint">Troubleshooting tools — use the copy buttons to paste into a bug report.
+      Build <code id="build">__BUILD__</code>.</p>
     <div class="stats-row">
       <button id="copyDiag" class="small">Copy diagnostics</button>
-      <button id="copyFrames" class="small">Copy raw frames</button>
-      <button id="exportCsv" class="small">Download raw frames CSV</button>
       <button id="dumpGatt" class="small">Dump GATT services</button>
       <label class="checkbox"><input type="checkbox" id="showRaw"> Log raw notifications</label>
+    </div>
+    <div class="stats-row">
+      <button id="exportReadings" class="small">Download readings CSV</button>
+      <button id="copyReadings" class="small">Copy readings CSV</button>
+      <button id="exportCsv" class="small">Download raw frames CSV</button>
+      <button id="resetSession" class="small">Reset session</button>
     </div>
     <div id="services" class="services"></div>
     <div class="write-row">
@@ -91,10 +85,6 @@
     </div>
     <div id="log" class="log"></div>
   </details>
-
-  <footer>
-    <p>Runs entirely in your browser — no server, no install. Build <code>__BUILD__</code>.</p>
-  </footer>
 
   <script src="app.js?v=__BUILD__"></script>
 </body>

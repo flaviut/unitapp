@@ -5,20 +5,22 @@ aimed at simple HVAC work (superheat/subcooling, delta-T across coils).
 
 ## Status
 
-**Working HVAC thermometer.** Features:
+**Working HVAC thermometer**, deliberately minimal — the main screen is just
+connect, temperatures, ΔT, superheat/subcool, and a trend chart:
 
 - Multiple clamps at once (the UT320i supports up to 6) with per-clamp cards
 - Live **ΔT** between the first two clamps — supply/return, in/out of a coil
 - °F/°C toggle (remembered), 10-minute multi-line trend chart
-- Keep-screen-awake toggle for field use
-- Session CSV: download or one-tap copy (time, clamp, °C, °F)
+- No babysitting: the screen stays awake automatically while a clamp is
+  connected, and dropped clamps reconnect themselves
 - **Superheat/subcool calculator**: enter gauge pressure, pick the clamp on
   the line — supports R-410A, R-32, R-454B, R-22, R-407C, R-404A, R-134a.
   Saturation tables generated with CoolProp 8.0 (NIST-grade equations of
   state), dew line for superheat and bubble line for subcool so glide blends
   are handled correctly
-- Debug menu (collapsed by default): GATT dump, raw frame log, manual hex
-  writes, and one-tap "Copy diagnostics" for bug reports
+- Debug menu (collapsed by default) holds everything else: session CSV
+  download/copy, GATT dump, raw frame log, manual hex writes, and one-tap
+  "Copy diagnostics" for bug reports
 
 ### Wire protocol
 
@@ -91,5 +93,5 @@ Or host it on GitHub Pages — the app is static files with no build step.
 - [x] Multi-clamp support with live delta-T
 - [x] Superheat/subcooling calculator (CoolProp-generated PT tables)
 - [ ] Map battery/status fields — the live-frame status byte and cmd
-  0x08/0x06 payloads are shown raw on each clamp card; capture them at
-  different battery levels to decode
+  0x08/0x06 payloads are included in "Copy diagnostics" (debug menu);
+  capture them at different battery levels to decode

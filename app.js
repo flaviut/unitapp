@@ -39,7 +39,7 @@ const CHART_WINDOW_MS = 10 * 60 * 1000;
 const $ = (id) => document.getElementById(id);
 
 // Each clamp: {device, server, writeChar, name, color, rxBuffer, readings:[{t,c}],
-//             latest, connected, el:{card, reading, stats, conn, reconnect}}
+//             connected, el:{card, name, conn, reading}}
 const clamps = [];
 // Session-wide logs that survive clamp removal.
 const readingsLog = []; // {t, name, c}
@@ -95,9 +95,11 @@ function extractUtFrames(clamp, chunk) {
 
 // --- Formatting -----------------------------------------------------------
 
+// One decimal everywhere: the clamp itself is only good to about a degree,
+// and nobody in an attic cares about hundredths.
 const cToF = (c) => c * 9 / 5 + 32;
-const fmtAbs = (c) => unit === 'F' ? `${cToF(c).toFixed(2)} °F` : `${c.toFixed(2)} °C`;
-const fmtDelta = (dc) => unit === 'F' ? `${(dc * 9 / 5).toFixed(2)} °F` : `${dc.toFixed(2)} °C`;
+const fmtAbs = (c) => unit === 'F' ? `${cToF(c).toFixed(1)} °F` : `${c.toFixed(1)} °C`;
+const fmtDelta = (dc) => unit === 'F' ? `${(dc * 9 / 5).toFixed(1)} °F` : `${dc.toFixed(1)} °C`;
 
 function hex(bytes) {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join(' ');
@@ -146,56 +148,40 @@ function makeCard(clamp) {
        <span class="name">${clamp.name}</span>
        <span class="conn">connecting…</span>
        <span class="spacer"></span>
-       <button class="small reconnect hidden">Reconnect</button>
        <button class="small remove" title="Remove">✕</button>
      </div>
-     <div class="reading">–</div>
-     <div class="hint stats"></div>`;
+     <div class="reading">–</div>`;
   $('clamps').appendChild(card);
   clamp.el = {
     card,
     name: card.querySelector('.name'),
     conn: card.querySelector('.conn'),
     reading: card.querySelector('.reading'),
-    stats: card.querySelector('.stats'),
-    reconnect: card.querySelector('.reconnect'),
   };
   card.querySelector('.remove').addEventListener('click', () => removeClamp(clamp));
-  clamp.el.reconnect.addEventListener('click', () =>
-    setupClamp(clamp).catch((e) => setConn(clamp, `error: ${e.message}`, false)));
 }
 
 function setConn(clamp, text, connected) {
   clamp.connected = connected;
   clamp.el.conn.textContent = text;
   clamp.el.conn.classList.toggle('ok', connected);
-  clamp.el.reconnect.classList.toggle('hidden', connected);
 }
 
 function removeClamp(clamp) {
-  try { clamp.device.gatt.disconnect(); } catch { /* already gone */ }
   clamp.removed = true;
+  try { clamp.device.gatt.disconnect(); } catch { /* already gone */ }
   clamp.el.card.remove();
   clamps.splice(clamps.indexOf(clamp), 1);
   updateDelta();
   drawChart();
   refreshWriteTargets();
+  syncWakeLock();
 }
 
 function renderClamp(clamp) {
   const last = clamp.readings[clamp.readings.length - 1];
   if (!last) return;
   clamp.el.reading.textContent = fmtAbs(last.c);
-  const cs = clamp.readings.map((r) => r.c);
-  const min = Math.min(...cs), max = Math.max(...cs);
-  let text = `min ${fmtAbs(min)} · max ${fmtAbs(max)} · ${cs.length} samples`;
-  if (clamp.statusByte != null) {
-    text += ` · raw status 0x${clamp.statusByte.toString(16).padStart(2, '0')}`;
-  }
-  clamp.el.stats.textContent = text;
-  clamp.el.stats.title = clamp.info
-    ? Object.entries(clamp.info).map(([c, p]) => `cmd 0x0${Number(c).toString(16)}: ${p}`).join('\n')
-    : '';
 }
 
 function updateDelta() {
@@ -367,10 +353,27 @@ async function addClamp() {
     clamps.push(clamp);
     makeCard(clamp);
     device.addEventListener('gattserverdisconnected', () => {
-      if (!clamp.removed) setConn(clamp, 'disconnected', false);
+      if (!clamp.removed) autoReconnect(clamp);
     });
   }
   await setupClamp(clamp);
+  syncWakeLock();
+}
+
+// A dropped clamp is normal in the field (walked to the truck, phone slept).
+// Keep retrying quietly until it comes back or the card is removed.
+async function autoReconnect(clamp) {
+  if (clamp.reconnecting) return;
+  clamp.reconnecting = true;
+  setConn(clamp, 'reconnecting…', false);
+  while (!clamp.removed && !clamp.connected) {
+    try {
+      await setupClamp(clamp);
+    } catch {
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+  }
+  clamp.reconnecting = false;
 }
 
 async function setupClamp(clamp) {
@@ -530,15 +533,20 @@ function framesCsv() {
 }
 
 function diagText() {
-  const build = document.querySelector('footer code')?.textContent || '?';
+  const build = $('build')?.textContent || '?';
   const lines = [
     `UT320i app diagnostics — build ${build} — ${new Date().toISOString()}`,
     `UA: ${navigator.userAgent}`,
     `Clamps (${clamps.length}):`,
     ...clamps.map((c) => {
       const last = c.readings[c.readings.length - 1];
+      const status = c.statusByte != null
+        ? ` | status 0x${c.statusByte.toString(16).padStart(2, '0')}` : '';
+      const info = c.info
+        ? Object.entries(c.info).map(([cmd, p]) => ` | cmd 0x0${Number(cmd).toString(16)}: ${p}`).join('')
+        : '';
       return `  - ${c.fullName} | ${c.connected ? 'connected' : 'disconnected'} | ` +
-        `${c.readings.length} samples${last ? ` | last ${last.c.toFixed(3)} °C` : ''}`;
+        `${c.readings.length} samples${last ? ` | last ${last.c.toFixed(3)} °C` : ''}${status}${info}`;
     }),
     `Last raw frames (up to 30):`,
     ...framesLog.slice(-30).map((f) => `  ${new Date(f.t).toISOString()} ${f.name}: ${hex(f.bytes)}`),
@@ -567,19 +575,22 @@ async function copyText(text, btn) {
 }
 
 // --- Wake lock ------------------------------------------------------------
+// Automatic: while any clamp is on screen, the screen stays on. No checkbox
+// to remember — a phone that sleeps mid-measurement is a lost reading.
 
-async function setAwake(on) {
-  if (on) {
-    try { wakeLock = await navigator.wakeLock.request('screen'); }
-    catch (e) { alert(`Keep-awake unavailable: ${e.message}`); $('keepAwake').checked = false; }
-  } else {
-    wakeLock?.release();
+async function syncWakeLock() {
+  const want = clamps.length > 0 && document.visibilityState === 'visible';
+  if (want && !wakeLock) {
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } catch { /* unsupported or denied — nothing actionable */ }
+  } else if (!want && wakeLock) {
+    wakeLock.release();
     wakeLock = null;
   }
 }
-document.addEventListener('visibilitychange', () => {
-  if ($('keepAwake').checked && document.visibilityState === 'visible') setAwake(true);
-});
+document.addEventListener('visibilitychange', syncWakeLock);
 
 // --- Wiring ---------------------------------------------------------------
 
@@ -629,10 +640,10 @@ $('connect').addEventListener('click', () =>
   addClamp().catch((e) => {
     if (e.name !== 'NotFoundError') $('status').textContent = `Error: ${e.message}`;
   }));
-$('keepAwake').addEventListener('change', (e) => setAwake(e.target.checked));
 $('resetSession').addEventListener('click', () => {
-  clamps.forEach((c) => { c.readings = []; c.el.reading.textContent = '–'; c.el.stats.textContent = ''; });
+  clamps.forEach((c) => { c.readings = []; c.el.reading.textContent = '–'; });
   readingsLog.length = 0;
+  framesLog.length = 0;
   updateDelta();
   drawChart();
 });
@@ -641,7 +652,6 @@ $('exportReadings').addEventListener('click', () =>
 $('copyReadings').addEventListener('click', (e) => copyText(readingsCsv(), e.target));
 $('exportCsv').addEventListener('click', () =>
   download(framesCsv(), `ut320i-frames-${Date.now()}.csv`));
-$('copyFrames').addEventListener('click', (e) => copyText(framesCsv(), e.target));
 $('copyDiag').addEventListener('click', (e) => copyText(diagText(), e.target));
 $('dumpGatt').addEventListener('click', () =>
   dumpGatt().catch((e) => { $('services').textContent = `Dump failed: ${e.message}`; }));
